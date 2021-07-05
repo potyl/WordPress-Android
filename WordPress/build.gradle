@@ -120,7 +120,6 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    def properties = loadPropertiesFromFile(checkGradlePropertiesFile())
 
     flavorDimensions "app", "buildType"
 
@@ -137,8 +136,6 @@ android {
             manifestPlaceholders = [magicLinkScheme:"wordpress"]
 
         }
-        addBuildConfigFieldsFromPrefixedProperties(wordpress, properties, 'wp')
-
         jetpack {
             dimension "app"
 
@@ -150,8 +147,6 @@ android {
             manifestPlaceholders = [magicLinkScheme:"jetpack"]
 
         }
-        addBuildConfigFieldsFromPrefixedProperties(jetpack, properties, 'wp') // Inherit same properties used from WP
-        addBuildConfigFieldsFromPrefixedProperties(jetpack, properties, 'jp') // Add or overwrite with Jetpack-specific properties
 
         vanilla { // used for release and beta
             dimension "buildType"
@@ -179,6 +174,10 @@ android {
             applicationIdSuffix ".prealpha"
             dimension "buildType"
         }
+
+        def properties = loadPropertiesFromFile(checkGradlePropertiesFile())
+        addBuildConfigFieldsAndResValues(properties, wordpress, 'wp')
+        addBuildConfigFieldsAndResValues(properties, jetpack, 'jp', 'wp')
     }
 
     buildTypes {
@@ -245,22 +244,28 @@ android {
     }
 }
 
-def addBuildConfigFieldsFromPrefixedProperties(variant, properties, prefix) {
-    println("Adding properties prefixed with '${prefix}.' to ${variant.name} product flavor...")
-    // e.g. for prefix='wp', add properties named "wp.xxx" to our BuildConfig
-    properties.any { property ->
-        if (property.key.toLowerCase().startsWith("${prefix}.")) {
-            variant.buildConfigField "String", property.key.replace("${prefix}.", "").replace(".", "_").toUpperCase(),
-                    "\"${property.value}\""
-            if (property.key.replace(prefix, "") == ".sentry.dsn") {
-                println("    buildConfigField ${property.key.replace("${prefix}.", "").replace(".", "_").toUpperCase()}, \"${property.value}\"")
-            }
-        }
-        if (property.key.toLowerCase().startsWith("${prefix}.res.")) {
-            variant.resValue "String", property.key.replace("${prefix}.res.", "").replace(".", "_").toLowerCase(),
-                    "${property.value}"
+def addBuildConfigFieldsAndResValues(properties, variant, prefix, fallbackPrefix = null) {
+    tuplesFromProperties(properties, prefix, fallbackPrefix).each {
+        variant.buildConfigField "String", it.key, it.value
+    }
+    tuplesFromProperties(properties, "${prefix}.res", fallbackPrefix).each {
+        variant.resValue "String", it.key, it.value
+    }
+}
+
+// TODO: find a better name
+def tuplesFromProperties(properties, prefix, fallbackPrefix = null) {
+    def createMap =  { pre ->
+        properties.findAll { property ->
+            property.key.toLowerCase().startsWith("${pre}.")
+        }.inject([:]) { result, property ->
+            def key = property.key.replace("${pre}.", "").replace(".", "_").toUpperCase().toString()
+            result[key] = "\"${property.value}\""
+            result
         }
     }
+    def fallbackMap = fallbackPrefix?.trim() ? createMap(fallbackPrefix) : [:]
+    return fallbackMap + createMap(prefix)
 }
 
 // Search for a variant-specific variation of the versionName and versionCode in `version.properties` file, based on the
